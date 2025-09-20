@@ -10,28 +10,12 @@ from io import StringIO
 st.set_page_config(page_title="Trade & Debt Explorer", page_icon="📈", layout="wide")
 
 # ---------- Sidebar: Data Ingestion ----------
-st.sidebar.header("📦 Data")
-st.sidebar.write(
-    "Upload the CSV used in your Plotly assignment. "
-    "It must include at least these columns: "
-    "`refArea`, `Indicator Code`, `refPeriod`, `Value`."
-)
-
-uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-df = None
-
 @st.cache_data
 def load_csv(file) -> pd.DataFrame:
     df = pd.read_csv(file)
     return df
 
-if uploaded:
-    df = load_csv(uploaded)
-else:
-    st.info(
-        "No CSV uploaded yet. You can still read through the page or upload the dataset to see the charts. "
-        "If you kept it locally, just drag-drop it here."
-    )
+df = load_csv("debt.csv")
 
 # ---------- Mapping dictionary (from your code) ----------
 indicator_mapping = {
@@ -106,9 +90,6 @@ indicator_mapping = {
 
 def prep_dataframe(df):
     df = df.copy()
-    # Extract country from refArea tail segment
-    if "Country" not in df.columns:
-        df["Country"] = df["refArea"].str.extract(r"/([^/]+)$")[0].fillna(df["refArea"])
     # Clean indicator names
     df["Indicator_Name"] = df["Indicator Code"].map(indicator_mapping).fillna(df["Indicator Code"])
     # Year as int if possible
@@ -125,10 +106,6 @@ if df is not None:
 st.sidebar.header("⚙️ Controls")
 
 if df is not None:
-    countries = sorted(df["Country"].dropna().unique().tolist())
-    default_country = ["Lebanon"] if "Lebanon" in countries else (countries[:1] if countries else [])
-    selected_countries = st.sidebar.multiselect("Country", countries, default=default_country)
-
     # Year range slider
     yr_min, yr_max = int(df["refPeriod"].min()), int(df["refPeriod"].max())
     year_range = st.sidebar.slider("Year range", min_value=yr_min, max_value=yr_max, value=(yr_min, yr_max), step=1)
@@ -146,12 +123,7 @@ if df is not None:
 
 # ---------- Page Header ----------
 st.title("📊 Trade & Debt Explorer")
-st.write(
-    "Explore two related themes from your previous Plotly assignment: "
-    "**Trade (Imports vs Exports)** and **External Debt vs National Income (GNP)**. "
-    "Use the controls to filter by country, adjust the year window, toggle log scale, "
-    "and apply smoothing. Insights update live."
-)
+
 
 if df is None:
     st.stop()
@@ -159,8 +131,6 @@ if df is None:
 # ---------- Helper: filter + smooth ----------
 def filter_df(base: pd.DataFrame) -> pd.DataFrame:
     d = base.copy()
-    if selected_countries:
-        d = d[d["Country"].isin(selected_countries)]
     d = d[(d["refPeriod"] >= year_range[0]) & (d["refPeriod"] <= year_range[1])]
     return d
 
@@ -183,14 +153,12 @@ trade = moving_average(trade)
 if trade.empty:
     st.warning("No trade data found for the current filters.")
 else:
-    subtitle = ", ".join(selected_countries) if selected_countries else "All countries"
     fig_trade = px.area(
         trade,
         x="refPeriod",
         y="Value",
         color="Indicator_Name",
-        facet_row="Country" if len(selected_countries) > 1 else None,
-        title=f"Imports vs Exports Over Time — {subtitle}",
+        title=f"Imports vs Exports Over Time",
         labels={"refPeriod": "Year", "Value": "Value (current US$)", "Indicator_Name": "Series"},
         template="plotly_white"
     )
@@ -198,42 +166,6 @@ else:
         fig_trade.update_yaxes(type="log", matches=None)
     fig_trade.update_layout(hovermode="x unified")
     st.plotly_chart(fig_trade, use_container_width=True)
-
-    # Quick insight block
-    with st.expander("💡 Quick insights (Trade)"):
-        # Compute latest year and balance
-        latest_year = int(trade["refPeriod"].max())
-        t_latest = trade[trade["refPeriod"] == latest_year]
-        # Aggregate across chosen countries
-        pivot = t_latest.pivot_table(index="Indicator_Name", values="Value", aggfunc="sum")
-        imports = float(pivot.get("Imports of goods, services and primary income (BoP, current US$)", pd.Series([np.nan])).iloc[0]) if "Imports of goods, services and primary income (BoP, current US$)" in pivot.index else np.nan
-        exports = float(pivot.get("Exports of goods, services and primary income (BoP, current US$)", pd.Series([np.nan])).iloc[0]) if "Exports of goods, services and primary income (BoP, current US$)" in pivot.index else np.nan
-        if not np.isnan(imports) and not np.isnan(exports):
-            balance = exports - imports
-            st.markdown(
-                f"- **Latest year ({latest_year}) trade balance:** "
-                f"{balance:,.0f} US$ ({'surplus' if balance>=0 else 'deficit'})."
-            )
-        # CAGR over selected range if possible
-        try:
-            start_year = int(trade["refPeriod"].min())
-            end_year = int(trade["refPeriod"].max())
-            years = max(1, end_year - start_year)
-            def cagr(series):
-                s = series.dropna()
-                if s.empty: return np.nan
-                first, last = s.iloc[0], s.iloc[-1]
-                if first <= 0 or last <= 0: return np.nan
-                return (last/first)**(1/years) - 1
-            cagr_df = trade.pivot_table(index="refPeriod", columns="Indicator_Name", values="Value").sort_index()
-            imp_cagr = cagr(cagr_df.get("Imports of goods, services and primary income (BoP, current US$)", pd.Series(dtype=float)))
-            exp_cagr = cagr(cagr_df.get("Exports of goods, services and primary income (BoP, current US$)", pd.Series(dtype=float)))
-            if not np.isnan(imp_cagr) and not np.isnan(exp_cagr):
-                st.markdown(
-                    f"- **CAGR ({start_year}–{end_year}):** Imports {imp_cagr*100:.1f}%, Exports {exp_cagr*100:.1f}%."
-                )
-        except Exception:
-            pass
 
 # ==============================
 # Visualization 2: Debt vs GNP (+ Ratio) OR Heatmap
@@ -276,23 +208,12 @@ with col1:
                 secondary_y=True
             )
 
-            fig.update_layout(
-                title=f"External Debt vs GNP and Debt/GNP Ratio — {', '.join(selected_countries) if selected_countries else 'All countries'}",
-                template="plotly_white",
-                barmode="overlay",
-                hovermode="x unified"
-            )
             if use_log:
                 fig.update_yaxes(type="log", secondary_y=False)
                 # Keep ratio in linear space
             fig.update_yaxes(title_text="US$ (current)", secondary_y=False)
             fig.update_yaxes(title_text="Debt/GNP (×)", secondary_y=True, rangemode="tozero")
             st.plotly_chart(fig, use_container_width=True)
-
-            # Insight
-            if not ratio.empty:
-                latest = ratio.iloc[-1]
-                st.caption(f"Latest Debt/GNP ratio ({int(latest['refPeriod'])}): **{latest['Debt_to_GNP']:.2f}×**")
 
     else:
         # Heatmap of top-variance indicators in selection window
@@ -316,22 +237,12 @@ with col1:
                 colorbar=dict(title="signed log₁₀")
             ))
             fig2.update_layout(
-                title=f"Top-Changing Indicators Heatmap — {', '.join(selected_countries) if selected_countries else 'All countries'}",
+                title=f"Top-Changing Indicators Heatmap",
                 xaxis_title="Year", yaxis_title="Indicator", template="plotly_white"
             )
             st.plotly_chart(fig2, use_container_width=True)
 
 with col2:
-    st.markdown("### ℹ️ What you’re seeing & how to use it")
-    st.write(
-        """
-- **Trade view** compares **Imports vs Exports** over time. Use *Year range* to focus on crises/recoveries and **Smoothing** to clarify trend vs noise.
-- **Debt view** shows **External Debt vs GNP** with the **Debt/GNP ratio** for a quick sustainability signal.
-- **Log scale** helps when a few extreme years dominate the y-axis.
-- **Heatmap mode** surfaces which indicators changed the most in your selected window.
-"""
-    )
-    # Small KPI cards (if data exists)
     try:
         kpi = filtered.copy()
         latest_year = int(kpi["refPeriod"].max())
@@ -350,17 +261,3 @@ with col2:
             st.metric("Debt/GNP (×)", f"{debt/gnp:.2f}")
     except Exception:
         pass
-
-st.markdown("---")
-st.subheader("📖 Context & Insights")
-st.write(
-    """
-**Why these two visuals together?**  
-Trade dynamics (exports vs imports) shape foreign currency flows, which in turn affect borrowing needs and **external debt**. By pairing them, users can see whether persistent trade deficits correlate with rising **Debt/GNP**.
-
-**Questions to explore:**
-1. When the trade balance improves, does the **Debt/GNP** ratio stabilize after a lag?
-2. Are there structural breaks (policy, shocks) visible when you adjust the **year range**?
-3. Does smoothing reveal persistent trends masked by volatility?
-"""
-)
