@@ -110,10 +110,6 @@ if df is not None:
     yr_min, yr_max = int(df["refPeriod"].min()), int(df["refPeriod"].max())
     year_range = st.sidebar.slider("Year range", min_value=yr_min, max_value=yr_max, value=(yr_min, yr_max), step=1)
 
-    # Smoothing + scale
-    smooth = st.sidebar.slider("Smoothing (moving average, years)", 1, 7, 1, 1)
-    use_log = st.sidebar.checkbox("Log scale (y axis)", value=False)
-
     # Interaction presets (both charts respect filters, but this switches the 2nd chart’s focus)
     second_chart_mode = st.sidebar.radio(
         "Second visualization mode",
@@ -135,10 +131,6 @@ def filter_df(base: pd.DataFrame) -> pd.DataFrame:
     return d
 
 def moving_average(d: pd.DataFrame, by_cols=("Country", "Indicator Code")) -> pd.DataFrame:
-    if smooth <= 1:
-        return d
-    d = d.sort_values(["Country", "Indicator Code", "refPeriod"]).copy()
-    d["Value"] = d.groupby(list(by_cols))["Value"].transform(lambda s: s.rolling(smooth, min_periods=1).mean())
     return d
 
 filtered = filter_df(df)
@@ -162,8 +154,6 @@ else:
         labels={"refPeriod": "Year", "Value": "Value (current US$)", "Indicator_Name": "Series"},
         template="plotly_white"
     )
-    if use_log:
-        fig_trade.update_yaxes(type="log", matches=None)
     fig_trade.update_layout(hovermode="x unified")
     st.plotly_chart(fig_trade, use_container_width=True)
 
@@ -208,9 +198,6 @@ with col1:
                 secondary_y=True
             )
 
-            if use_log:
-                fig.update_yaxes(type="log", secondary_y=False)
-                # Keep ratio in linear space
             fig.update_yaxes(title_text="US$ (current)", secondary_y=False)
             fig.update_yaxes(title_text="Debt/GNP (×)", secondary_y=True, rangemode="tozero")
             st.plotly_chart(fig, use_container_width=True)
